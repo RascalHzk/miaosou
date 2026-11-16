@@ -1,0 +1,41 @@
+# Rust 构建输出（根工作区、Linux 壳各自有 target/）
+target/
+linux/src-tauri/target/
+
+# 前端构建产物
+dist/
+linux/ui/dist/
+
+# 信创 deb / 二进制（由 linux/scripts/build-debian10.sh 生成，不入库）
+linux/dist/
+
+# 图标生成的中间产物（icns 的 iconset 目录，由 make_icons.py 重建）
+linux/src-tauri/icons/source/miaosou.iconset
+
+# Node
+node_modules/
+
+# Python（图标生成脚本等）
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.db
+*.sqlite
+*.sqlite3
+.env
+
+# 通用构建/覆盖率/输出目录
+build/
+coverage/
+output/
+
+# 编辑器 / 系统
+.DS_Store
+.vscode
+.idea
+*.swp
+
+# 本地运行产物
+*.log
+.window-state.json

@@ -1,0 +1,42 @@
+[package]
+name = "cardinal-sdk"
+version = "0.1.0"
+edition = "2024"
+description = "Cardinal's SDK for building macOS file search utilities."
+license = "MIT"
+repository = "https://github.com/cardisoft/cardinal"
+homepage = "https://github.com/cardisoft/cardinal"
+documentation = "https://docs.rs/cardinal-sdk"
+publish = false
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+# 平台无关依赖（Linux 移植后仍需要）
+[dependencies]
+bitflags = "2.9.0"
+libc = "0.2.171"
+crossbeam-channel = "0.5"
+fswalk = { path = "../fswalk" }
+
+# macOS 专属依赖：FSEvents 事件流实现。
+# 信创移植（Linux）不需要，改为在编译期排除，event_stream 模块也只在 macOS 编译。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFString",
+  "CFRunLoop",
+  "CFArray",
+] }
+objc2-core-services = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "FSEvents",
+  "dispatch2",
+  "libc",
+] }
+dispatch2 = { version = "0.3.0", default-features = true, features = ["alloc"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tempfile = "3"

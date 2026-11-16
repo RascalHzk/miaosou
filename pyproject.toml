@@ -1,0 +1,29 @@
+# 仅用于工具链与少量辅助脚本（图标生成等）；不是可发布的 Python 包。
+# Rust 代码在本仓根目录用 Cargo 构建，见 Cargo.toml。
+
+[project]
+name = "miaosou-tools"
+version = "0.3.4"
+description = "秒搜 / Miaosou 辅助脚本与工具链配置"
+requires-python = ">=3.10"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [
+  ".git",
+  "target",
+  "node_modules",
+  "linux/ui/dist",
+  "linux/dist",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["linux/src-tauri/icons/source"]
+ignore_missing_imports = true
+warn_unused_ignores = true

@@ -1,0 +1,198 @@
+import { useEffect, useRef } from 'react';
+import type { MutableRefObject } from 'react';
+import { invoke } from '@tauri-apps/api/tauri';
+import type { StatusTabKey } from '../components/StatusBar';
+import {
+  subscribeQuickLookKeydown,
+  type QuickLookKeydownPayload,
+} from '../runtime/tauriEventRuntime';
+import { hasModifierKey } from '../utils/keyboard';
+import { openResultPath } from '../utils/openResultPath';
+import { useStableEvent } from './useStableEvent';
+
+type MoveSelectionOptions = {
+  extend?: boolean;
+};
+
+type UseAppHotkeysOptions = {
+  activeTab: StatusTabKey;
+  activeRowIndex: number | null;
+  selectedPaths: string[];
+  selectedIndicesRef: MutableRefObject<number[]>;
+  focusSearchInput: () => void;
+  focusAndSelectSearchInput: () => void;
+  clearSelection: () => void;
+  navigateSelection: (delta: 1 | -1, options?: MoveSelectionOptions) => void;
+  triggerQuickLook?: () => void;
+};
+
+const QUICK_LOOK_KEYCODE_DOWN = 125;
+const QUICK_LOOK_KEYCODE_UP = 126;
+
+const isEditableTarget = (target: EventTarget | null): boolean => {
+  const element = target as HTMLElement | null;
+  if (!element) return false;
+  const tagName = element.tagName;
+  return tagName === 'INPUT' || tagName === 'TEXTAREA' || element.isContentEditable;
+};
+
+export function useAppHotkeys({
+  activeTab,
+  activeRowIndex,
+  selectedPaths,
+  selectedIndicesRef,
+  focusSearchInput,
+  focusAndSelectSearchInput,
+  clearSelection,
+  navigateSelection,
+  triggerQuickLook,
+}: UseAppHotkeysOptions): void {
+  const keyboardStateRef = useRef<{ activeTab: StatusTabKey; activeRowIndex: number | null }>({
+    activeTab,
+    activeRowIndex,
+  });
+
+  useEffect(() => {
+    keyboardStateRef.current.activeTab = activeTab;
+    keyboardStateRef.current.activeRowIndex = activeRowIndex;
+  }, [activeTab, activeRowIndex]);
+
+  const handleMetaShortcut = useStableEvent((event: KeyboardEvent, currentTab: StatusTabKey) => {
+    const key = event.key.toLowerCase();
+    if (key === 'f') {
+      event.preventDefault();
+      focusAndSelectSearchInput();
+      return true;
+    }
+
+    // Preserve native copy/edit behavior when focus is inside an editable control.
+    // Meta+F is intentionally handled above to focus the app search input.
+    if (isEditableTarget(event.target)) {
+      return false;
+    }
+
+    if (currentTab !== 'files') {
+      return false;
+    }
+
+    if (key === 'r' && selectedPaths.length > 0) {
+      event.preventDefault();
+      selectedPaths.forEach((path) => {
+        void invoke('open_in_finder', { path });
+      });
+      return true;
+    }
+
+    if (key === 'o' && selectedPaths.length > 0) {
+      event.preventDefault();
+      selectedPaths.forEach((path) => openResultPath(path));
+      return true;
+    }
+
+    if (key === 'c' && selectedPaths.length > 0) {
+      event.preventDefault();
+      void invoke('copy_files_to_clipboard', { paths: selectedPaths }).catch((error) => {
+        console.error('Failed to copy files to clipboard', error);
+      });
+      return true;
+    }
+
+    return false;
+  });
+
+  const handleFilesNavigation = useStableEvent((event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (isEditableTarget(target)) {
+      return false;
+    }
+
+    const isSpaceKey = event.code === 'Space' || event.key === ' ';
+    if (isSpaceKey) {
+      // 非 macOS（不做内置预览）没有 Quick Look：空格保留浏览器默认行为
+      if (!triggerQuickLook) {
+        return false;
+      }
+      if (event.repeat || !selectedIndicesRef.current.length) {
+        return true;
+      }
+      event.preventDefault();
+      triggerQuickLook();
+      return true;
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (hasModifierKey(event, { includeShift: false })) {
+        return true;
+      }
+
+      if (
+        event.key === 'ArrowUp' &&
+        !event.shiftKey &&
+        keyboardStateRef.current.activeRowIndex === 0
+      ) {
+        event.preventDefault();
+        clearSelection();
+        focusSearchInput();
+        return true;
+      }
+
+      event.preventDefault();
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      navigateSelection(delta, { extend: event.shiftKey });
+      return true;
+    }
+
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const { activeTab: currentTab } = keyboardStateRef.current;
+
+      if (event.metaKey && handleMetaShortcut(event, currentTab)) {
+        return;
+      }
+
+      if (currentTab !== 'files') {
+        return;
+      }
+
+      if (handleFilesNavigation(event)) {
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleMetaShortcut, handleFilesNavigation]);
+
+  const handleQuickLookKeydown = useStableEvent((payload: QuickLookKeydownPayload) => {
+    if (keyboardStateRef.current.activeTab !== 'files') {
+      return;
+    }
+
+    if (!payload || !selectedIndicesRef.current.length) {
+      return;
+    }
+
+    const { keyCode, modifiers } = payload;
+    if (modifiers.command || modifiers.option || modifiers.control) {
+      return;
+    }
+
+    if (keyCode === QUICK_LOOK_KEYCODE_DOWN) {
+      navigateSelection(1, { extend: modifiers.shift });
+    } else if (keyCode === QUICK_LOOK_KEYCODE_UP) {
+      navigateSelection(-1, { extend: modifiers.shift });
+    }
+  });
+
+  useEffect(() => {
+    const unlistenQuickLook = subscribeQuickLookKeydown(handleQuickLookKeydown);
+    return unlistenQuickLook;
+  }, [handleQuickLookKeydown]);
+}

@@ -1,0 +1,38 @@
+秒搜 / Miaosou
+Copyright (c) 2025 秒搜 信创移植项目
+
+本产品是 Cardinal 的 Linux（信创）移植版。
+Cardinal: https://github.com/ldm0/cardinal
+Copyright (c) 2025 Cardinal Contributors
+
+上游代码以 MIT 许可发布，以下声明适用于本项目及其衍生二进制：
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+第三方资源说明
+--------------
+
+- 应用图标（linux/src-tauri/icons/）：**本项目原创**，由
+  `linux/src-tauri/icons/source/make_icons.py` 生成（Pillow 绘制，无第三方素材）。
+  上游 Cardinal 的图标与名称未被使用。
+- 索引格式与内核 crate（cardinal-sdk / fswalk / search-cache / cardinal-syntax 等）
+  来自上游，保持原样以维持与上游的兼容与合并能力。
+- Linux 前端（linux/ui/）与 Tauri v1 壳（linux/src-tauri/）派生自上游 Cardinal
+  （commit 4c50734）的 React/Tauri 代码，已按单壳 fork 策略改写为 Linux 目标；
+  仓内不再保留上游 macOS 应用副本，行为对照以该上游提交为准。

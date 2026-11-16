@@ -1,0 +1,12 @@
+# 信创壳（linux/）的 cargo 配置覆盖。
+#
+# 上游仓库根目录的 .cargo/config.toml 带有 macOS 专用 rustflags：
+#   -Csplit-debuginfo=packed   → Linux/ELF 不支持该取值，构建会直接报错
+#   -Csymbol-mangling-version=v0 → 可保留但有版本敏感性
+#
+# cargo 会合并当前目录及所有祖先目录的配置，越靠近 cwd 的配置优先级越高，
+# 因此在这里整体覆盖 [build] rustflags，保证 linux/ 下的构建不继承 macOS 专用参数。
+# 注意：上游 workspace 的构建（macOS 端）不受本文件影响，仍使用根配置。
+
+[build]
+rustflags = []

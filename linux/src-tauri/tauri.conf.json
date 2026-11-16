@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "http://localhost:1420",
+    "distDir": "../ui/dist",
+    "withGlobalTauri": false
+  },
+  "package": {
+    "productName": "Miaosou",
+    "version": "0.3.4"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "globalShortcut": {
+        "all": true
+      },
+      "window": {
+        "all": false,
+        "show": true,
+        "hide": true,
+        "setFocus": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": [
+        "deb"
+      ],
+      "identifier": "cn.miaosou.app",
+      "publisher": "秒搜 信创移植项目",
+      "copyright": "MIT · 上游 Cardinal © Cardinal Contributors；本移植版 © 秒搜 信创移植项目",
+      "category": "Utility",
+      "shortDescription": "秒搜 —— 快速文件搜索",
+      "longDescription": "秒搜（Miaosou）是基于 Cardinal（MIT）的 Linux 移植版，面向信创环境（统信 UOS V20 / x86_64）。本地全盘文件名索引，Everything 风格查询语法，毫秒级检索。",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "deb": {
+        "section": "utils",
+        "priority": "optional",
+        "desktopTemplate": "packaging/miaosou.desktop.hbs",
+        "files": {
+          "/usr/share/doc/miaosou/copyright": "packaging/copyright",
+          "/usr/share/metainfo/cn.miaosou.app.metainfo.xml": "packaging/cn.miaosou.app.metainfo.xml"
+        }
+      }
+    },
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'",
+      "freezePrototype": true
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "秒搜",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "systemTray": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": false,
+      "menuOnLeftClick": true
+    }
+  }
+}

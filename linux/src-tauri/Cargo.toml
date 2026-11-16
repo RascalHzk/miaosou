@@ -1,0 +1,55 @@
+[package]
+name = "miaosou"
+version = "0.3.4"
+description = "秒搜 —— 快速文件搜索（Tauri v1 壳 / 统信 UOS V20 / x86_64）"
+authors = ["秒搜 信创移植项目"]
+# 注意：这里必须用 2021。Tauri v1 的 build script 依赖的 cargo_toml 0.15 不认识 edition 2024，
+# 会报 `data did not match any variant of untagged enum Inheritable`。
+# 内核 crate 仍可用 edition 2024（它们不在 v1 build script 的解析路径里）。
+edition = "2021"
+publish = false
+
+# 独立 workspace：Linux 壳不并入根 workspace（根 workspace 是平台无关内核 crate）。
+# 这样 `cargo` 在 linux/ 下不会把本包算作根成员，内核 crate 以 path 依赖引入。
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+# Tauri v1：唯一能在 UOS V20（webkit2gtk 4.0 / libsoup2）上运行的主线版本。
+# 不要升级到 v2 —— v2 要求 webkit2gtk 4.1，Debian 10 基座没有。
+tauri = { version = "1.8", features = [
+    # 与 tauri.conf.json 的 allowlist 严格对应（tauri-build 会校验两者一致）
+    # 不启用 shell-open：打开文件/目录走我们自己的 reveal 命令（dde-open/xdg-open），
+    # 少暴露一个任意命令打开的 JS API。
+    "global-shortcut-all",
+    "window-show",
+    "window-hide",
+    "window-set-focus",
+    # 系统托盘（Linux 需要 libayatana-appindicator3-dev；见 linux/scripts/Dockerfile.debian10）
+    "system-tray",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# vendored 内核 crate（平台无关部分，MIT；见仓库根 NOTICE）：
+#   cardinal-syntax  查询语法解析
+#   fswalk           文件系统扫描
+#   search-cache     倒排/名称索引 + 查询（依赖 slab-mmap 持久化、namepool 字符串池）
+#   search-cancel    查询/扫描取消令牌
+cardinal-syntax = { path = "../../cardinal-syntax" }
+search-cache = { path = "../../search-cache" }
+cardinal-sdk = { path = "../../cardinal-sdk" }
+# 文件系统事件（Linux: inotify；macOS 开发机: FSEvents），用于实时索引更新
+notify = "8"
+# 剪贴板（复制文件）：X11 是「属主服务」模型，需在后台线程里 serve；不用 image 特性
+arboard = { version = "3.7", default-features = false }
+# freedesktop 缩略图缓存的文件名是 md5(file:// URI)
+md-5 = "0.10"
+search-cancel = { path = "../../search-cancel" }
+fswalk = { path = "../../fswalk" }
+
+[features]
+# `tauri build` / `tauri dev --release` 时启用，把前端资源编译进二进制。
+custom-protocol = ["tauri/custom-protocol"]

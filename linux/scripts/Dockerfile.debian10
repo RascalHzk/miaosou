@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Cardinal 信创版构建环境（Debian 10 / glibc 2.28 / webkit2gtk 4.0）
+#
+# 目标机 UOS V20 的 glibc 是 2.28、webkit2gtk-4.0-37 是 2.38.6 系；
+# Debian 10 归档仓库恰好提供同版本，是最接近目标机的构建基线。
+#
+# 构建时若 Docker Hub / apt 需要代理，用 --build-arg http_proxy=... 传入。
+# ---------------------------------------------------------------------------
+FROM --platform=linux/amd64 docker.m.daocloud.io/library/debian:buster
+
+ARG APT_MIRROR=http://mirrors.aliyun.com/debian-archive
+ARG RUST_TOOLCHAIN=nightly-2025-12-11
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:$PATH \
+    CARGO_TARGET_DIR=/build/target \
+    CARGO_TERM_COLOR=never \
+    DEBIAN_FRONTEND=noninteractive
+
+# --- 1. buster 已 EOL：归档源 + 关闭有效期检查 ---
+RUN echo "deb ${APT_MIRROR}/debian buster main contrib non-free" > /etc/apt/sources.list \
+ && echo "deb ${APT_MIRROR}/debian-security buster/updates main contrib non-free" >> /etc/apt/sources.list \
+ && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid-until \
+ && printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
+ && apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+      build-essential pkg-config curl ca-certificates file \
+      libwebkit2gtk-4.0-dev libgtk-3-dev libsoup2.4-dev librsvg2-dev libssl-dev \
+      libayatana-appindicator3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# --- 2. Rust 工具链（与仓库 rust-toolchain.toml 一致；namepool/search-cache 需要 nightly） ---
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+ && sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" --no-modify-path \
+ && rm -f /tmp/rustup-init.sh \
+ && rustc --version && cargo --version
+
+WORKDIR /src/linux/src-tauri
+CMD ["bash"]

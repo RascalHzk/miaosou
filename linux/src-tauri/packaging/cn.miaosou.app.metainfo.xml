@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>cn.miaosou.app</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>秒搜</name>
+  <name xml:lang="en">Miaosou</name>
+  <summary>快速本地文件搜索</summary>
+  <summary xml:lang="en">Fast local file search</summary>
+
+  <description>
+    <p>
+      秒搜（Miaosou）是面向统信 UOS V20 / x86_64 的本地文件搜索工具。它对本地文件建立文件名索引，支持 Everything 风格查询语法，
+      提供毫秒级检索与实时索引更新。
+    </p>
+    <p>
+      应用完全离线运行，不采集数据；索引保存在用户配置目录，随进程退出落盘。
+    </p>
+  </description>
+
+  <launchable type="desktop-id">miaosou.desktop</launchable>
+  <provides>
+    <binary>miaosou</binary>
+  </provides>
+
+  <categories>
+    <category>Utility</category>
+    <category>FileTools</category>
+  </categories>
+
+  <developer_name>秒搜 信创移植项目</developer_name>
+  <developer_name xml:lang="en">Miaosou Xinchuang Port</developer_name>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.3.4" date="2026-11-16">
+      <description>
+        <p>仓库整理：仅保留构建必需的内核 crates；README 中英双语；产品文案去上游品牌（版权归属见 NOTICE）。</p>
+      </description>
+    </release>
+    <release version="0.3.3" date="2026-11-16">
+      <description>
+        <p>右键菜单定位文案改为「在文件管理器中显示」。</p>
+      </description>
+    </release>
+    <release version="0.3.2" date="2026-11-16">
+      <description>
+        <p>修复右键菜单配色、设置页关闭按钮、默认监控路径显示与关于文案（UOS 反馈）。</p>
+      </description>
+    </release>
+    <release version="0.3.1" date="2026-11-16">
+      <description>
+        <p>实时监控改为部分覆盖：inotify 额度不足时保留已装好的 watch，未覆盖目录由周期对账兜底。</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-11-16">
+      <description>
+        <p>P3：安全加固、打包元数据、工程债拆分（索引/语法模块）。</p>
+      </description>
+    </release>
+  </releases>
+</component>
