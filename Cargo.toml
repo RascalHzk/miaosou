@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["search-cache"]
 resolver = "3"
 members = [
   # 秒搜 Linux 壳构建所需的内核 crates（vendored，MIT；见 NOTICE）

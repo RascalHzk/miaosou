@@ -34,7 +34,7 @@
 
 use crate::{
     identity::{self, LOG_PREFIX},
-    index::{IndexConfig, IndexHandle},
+    index::{IndexConfig, IndexHandle, DEFAULT_IGNORE_DIR_NAMES},
 };
 use cardinal_sdk::{EventFlag, FsEvent};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -115,6 +115,7 @@ struct WatchLayout {
     root: PathBuf,
     ignore_paths: Vec<PathBuf>,
     include_paths: Vec<PathBuf>,
+    ignore_dir_names: &'static [&'static str],
 }
 
 impl WatchLayout {
@@ -125,11 +126,16 @@ impl WatchLayout {
             root: canonical(&config.watch_root),
             ignore_paths: config.ignore_paths.iter().map(canonical).collect(),
             include_paths: config.include_paths.iter().map(canonical).collect(),
+            ignore_dir_names: DEFAULT_IGNORE_DIR_NAMES,
         }
     }
 
     fn should_ignore(&self, path: &Path) -> bool {
-        fswalk::should_ignore_path(path, &self.ignore_paths, &self.include_paths)
+        // 用户可以把监控根设成任意目录（包括名为 target/node_modules 的目录），
+        // 根目录本身永远不能被“按目录名忽略”排除，否则整个实时监控会退化为对账。
+        let name_ignored = path != self.root.as_path()
+            && fswalk::should_ignore_dir_name(path, &self.include_paths, self.ignore_dir_names);
+        fswalk::should_ignore_path(path, &self.ignore_paths, &self.include_paths) || name_ignored
     }
 }
 
@@ -602,5 +608,25 @@ mod tests {
 
         watcher.stop();
         std::fs::remove_dir_all(&root).ok();
+    }
+    #[test]
+    fn watch_root_is_never_ignored_by_dir_name() {
+        let base =
+            std::env::temp_dir().join(format!("miaosou-watch-root-name-{}", std::process::id()));
+        let root = base.join("target");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let config = IndexConfig::new(root.clone(), Vec::new(), Vec::new());
+        let layout = WatchLayout::canonicalized(&config);
+        assert!(
+            !layout.should_ignore(&layout.root),
+            "监控根即使叫 target 也不能被目录名规则排除"
+        );
+        assert!(
+            layout.should_ignore(&layout.root.join("nested/target")),
+            "根下的 target 子目录仍应被忽略"
+        );
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }

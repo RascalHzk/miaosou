@@ -1,6 +1,6 @@
 [package]
 name = "miaosou"
-version = "0.3.4"
+version = "0.3.5"
 description = "秒搜 —— 快速文件搜索（Tauri v1 壳 / 统信 UOS V20 / x86_64）"
 authors = ["秒搜 信创移植项目"]
 # 注意：这里必须用 2021。Tauri v1 的 build script 依赖的 cargo_toml 0.15 不认识 edition 2024，

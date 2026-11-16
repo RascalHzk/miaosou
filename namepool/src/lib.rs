@@ -3,10 +3,12 @@ use core::str;
 use parking_lot::Mutex;
 use regex::Regex;
 use search_cancel::CancellationToken;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct NamePool {
-    inner: Mutex<BTreeSet<Box<str>>>,
+    /// 原名 -> 小写名。键的 Box<str> 地址稳定（`push` 返回的 `&str` 依赖这一点），
+    /// 值用于大小写不敏感的字面量匹配，避免每次查询编译 regex。
+    inner: Mutex<BTreeMap<Box<str>, Box<str>>>,
 }
 
 impl std::fmt::Debug for NamePool {
@@ -26,7 +28,7 @@ impl Default for NamePool {
 impl NamePool {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(BTreeSet::new()),
+            inner: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -51,11 +53,19 @@ impl NamePool {
     /// and won't be overwritten.
     pub fn push<'c>(&'c self, name: &str) -> &'c str {
         let mut inner = self.inner.lock();
-        if !inner.contains(name) {
-            inner.insert(name.into());
+        if !inner.contains_key(name) {
+            let lower = name.to_lowercase().into_boxed_str();
+            inner.insert(name.into(), lower);
         }
-        let existing = inner.get(name).unwrap();
-        unsafe { str::from_raw_parts(existing.as_ptr(), existing.len()) }
+        let existing = inner.get_key_value(name).unwrap();
+        stable_str(existing.0)
+    }
+
+    /// 返回 `name` 的小写形式（用于子目录/后代匹配）。名字通常已经在池里；
+    /// 不在池里时返回 `None`，调用方自行 fallback。
+    pub fn casefold<'pool>(&'pool self, name: &str) -> Option<&'pool str> {
+        let inner = self.inner.lock();
+        inner.get(name).map(|lower| stable_str(lower.as_ref()))
     }
 
     pub fn search_substr<'search, 'pool: 'search>(
@@ -64,10 +74,10 @@ impl NamePool {
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
         let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
+        for (i, (name, _lower)) in self.inner.lock().iter().enumerate() {
             cancellation_token.is_cancelled_sparse(i)?;
-            if x.contains(substr) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
+            if name.contains(substr) {
+                result.insert(stable_str(name));
             }
         }
         Some(result)
@@ -79,10 +89,10 @@ impl NamePool {
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
         let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
+        for (i, (name, _lower)) in self.inner.lock().iter().enumerate() {
             cancellation_token.is_cancelled_sparse(i)?;
-            if x.ends_with(suffix) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
+            if name.ends_with(suffix) {
+                result.insert(stable_str(name));
             }
         }
         Some(result)
@@ -94,13 +104,12 @@ impl NamePool {
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
         let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
+        for (i, (name, _lower)) in self.inner.lock().iter().enumerate() {
             cancellation_token.is_cancelled_sparse(i)?;
-            if x.starts_with(prefix) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
+            if name.starts_with(prefix) {
+                result.insert(stable_str(name));
             }
         }
-
         Some(result)
     }
 
@@ -110,11 +119,10 @@ impl NamePool {
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
         let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
+        for (i, (name, _lower)) in self.inner.lock().iter().enumerate() {
             cancellation_token.is_cancelled_sparse(i)?;
-            let existing = unsafe { str::from_raw_parts(x.as_ptr(), x.len()) };
-            if pattern.is_match(existing) {
-                result.insert(existing);
+            if pattern.is_match(name) {
+                result.insert(stable_str(name));
             }
         }
         Some(result)
@@ -128,14 +136,89 @@ impl NamePool {
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
         let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
+        for (i, (name, _lower)) in self.inner.lock().iter().enumerate() {
             cancellation_token.is_cancelled_sparse(i)?;
-            if &**x == exact {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
+            if &**name == exact {
+                result.insert(stable_str(name));
             }
         }
         Some(result)
     }
+
+    /// 大小写不敏感的子串匹配：`needle` 会先小写化；小写名在池中只存一份。
+    /// 短 needle 用 `memchr::memmem`（SIMD），比逐条 regex 快。
+    pub fn search_substr_insensitive<'search, 'pool: 'search>(
+        &'pool self,
+        needle: &'search str,
+        cancellation_token: CancellationToken,
+    ) -> Option<BTreeSet<&'pool str>> {
+        let folded = needle.to_lowercase();
+        let finder = memchr::memmem::Finder::new(folded.as_bytes());
+        let mut result = BTreeSet::new();
+        for (i, (name, lower)) in self.inner.lock().iter().enumerate() {
+            cancellation_token.is_cancelled_sparse(i)?;
+            if finder.find(lower.as_bytes()).is_some() {
+                result.insert(stable_str(name));
+            }
+        }
+        Some(result)
+    }
+
+    pub fn search_prefix_insensitive<'search, 'pool: 'search>(
+        &'pool self,
+        prefix: &'search str,
+        cancellation_token: CancellationToken,
+    ) -> Option<BTreeSet<&'pool str>> {
+        let folded = prefix.to_lowercase();
+        let mut result = BTreeSet::new();
+        for (i, (name, lower)) in self.inner.lock().iter().enumerate() {
+            cancellation_token.is_cancelled_sparse(i)?;
+            if lower.starts_with(&folded) {
+                result.insert(stable_str(name));
+            }
+        }
+        Some(result)
+    }
+
+    pub fn search_suffix_insensitive<'search, 'pool: 'search>(
+        &'pool self,
+        suffix: &'search str,
+        cancellation_token: CancellationToken,
+    ) -> Option<BTreeSet<&'pool str>> {
+        let folded = suffix.to_lowercase();
+        let mut result = BTreeSet::new();
+        for (i, (name, lower)) in self.inner.lock().iter().enumerate() {
+            cancellation_token.is_cancelled_sparse(i)?;
+            if lower.ends_with(&folded) {
+                result.insert(stable_str(name));
+            }
+        }
+        Some(result)
+    }
+
+    pub fn search_exact_insensitive<'search, 'pool: 'search>(
+        &'pool self,
+        exact: &'search str,
+        cancellation_token: CancellationToken,
+    ) -> Option<BTreeSet<&'pool str>> {
+        let folded = exact.to_lowercase();
+        let mut result = BTreeSet::new();
+        for (i, (name, lower)) in self.inner.lock().iter().enumerate() {
+            cancellation_token.is_cancelled_sparse(i)?;
+            if lower.as_ref() == folded.as_str() {
+                result.insert(stable_str(name));
+            }
+        }
+        Some(result)
+    }
+}
+
+/// # Safety
+///
+/// `value` 指向池中永不删除、永不移动的 `Box<str>` 堆分配；调用方必须保证返回的
+/// 引用不会比池本身活得更久（签名由调用方约束为 `&'pool self`）。
+fn stable_str<'a>(value: &str) -> &'a str {
+    unsafe { str::from_raw_parts(value.as_ptr(), value.len()) }
 }
 
 #[cfg(test)]
@@ -890,5 +973,35 @@ mod tests {
         // Search for a pattern that appears in many strings
         let result = substr(&pool, "1");
         assert_eq!(result.len(), 271);
+    }
+    #[test]
+    fn case_insensitive_searches_return_original_names() {
+        let pool = NamePool::new();
+        pool.push("Report.PDF");
+        pool.push("README.md");
+        pool.push("数据.TXT");
+
+        let substr = pool
+            .search_substr_insensitive("report", CancellationToken::noop())
+            .unwrap();
+        assert_eq!(substr.len(), 1);
+        assert!(substr.contains("Report.PDF"));
+
+        let prefix = pool
+            .search_prefix_insensitive("read", CancellationToken::noop())
+            .unwrap();
+        assert!(prefix.contains("README.md"));
+
+        let suffix = pool
+            .search_suffix_insensitive(".txt", CancellationToken::noop())
+            .unwrap();
+        assert!(suffix.contains("数据.TXT"));
+
+        let exact = pool
+            .search_exact_insensitive("report.pdf", CancellationToken::noop())
+            .unwrap();
+        assert!(exact.contains("Report.PDF"));
+
+        assert_eq!(pool.casefold("Report.PDF"), Some("report.pdf"));
     }
 }

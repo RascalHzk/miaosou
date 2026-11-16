@@ -23,8 +23,19 @@ pub(crate) enum SegmentMatcher {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SegmentMatcherConcrete {
-    Plain { kind: SegmentKind, needle: String },
-    Regex { regex: Regex },
+    Plain {
+        kind: SegmentKind,
+        needle: String,
+    },
+    /// 大小写不敏感的字面量：`needle` 已小写化，候选名通过 NamePool 的小写副本匹配，
+    /// 不再为每个查询编译 regex。
+    PlainInsensitive {
+        kind: SegmentKind,
+        needle: String,
+    },
+    Regex {
+        regex: Regex,
+    },
 }
 
 impl SegmentMatcherConcrete {
@@ -36,8 +47,26 @@ impl SegmentMatcherConcrete {
                 SegmentKind::Suffix => candidate.ends_with(needle),
                 SegmentKind::Exact => candidate == needle,
             },
+            SegmentMatcherConcrete::PlainInsensitive { kind, needle } => {
+                if let Some(lower) = crate::cache::NAME_POOL.casefold(candidate) {
+                    match_kind(lower, *kind, needle)
+                } else {
+                    // 候选不在池中（测试/边界路径）：退化为临时小写。
+                    let lower = candidate.to_lowercase();
+                    match_kind(&lower, *kind, needle)
+                }
+            }
             SegmentMatcherConcrete::Regex { regex } => regex.is_match(candidate),
         }
+    }
+}
+
+fn match_kind(haystack: &str, kind: SegmentKind, needle: &str) -> bool {
+    match kind {
+        SegmentKind::Substr => haystack.contains(needle),
+        SegmentKind::Prefix => haystack.starts_with(needle),
+        SegmentKind::Suffix => haystack.ends_with(needle),
+        SegmentKind::Exact => haystack == needle,
     }
 }
 
@@ -80,25 +109,20 @@ fn build_concrete_segment_matcher(
     let kind = segment_kind(segment);
     let value = segment_value(segment);
     let is_wildcard = value.contains('*') || value.contains('?');
-    if options.case_insensitive || is_wildcard {
-        let pattern = if is_wildcard {
-            // Wildcard pattern is /exact/ by default, so we don't need to
-            // adjust it based on SegmentKind.
-            wildcard_to_regex(value)
-        } else {
-            let base = regex::escape(value);
-            match kind {
-                SegmentKind::Substr => base,
-                SegmentKind::Prefix => format!("^(?:{base})"),
-                SegmentKind::Suffix => format!("(?:{base})$"),
-                SegmentKind::Exact => format!("^(?:{base})$"),
-            }
-        };
+    if is_wildcard {
+        let pattern = wildcard_to_regex(value);
         let mut builder = RegexBuilder::new(&pattern);
         builder.case_insensitive(options.case_insensitive);
         builder
             .build()
             .map(|regex| SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }))
+    } else if options.case_insensitive {
+        Ok(SegmentMatcher::Concrete(
+            SegmentMatcherConcrete::PlainInsensitive {
+                kind,
+                needle: value.to_lowercase(),
+            },
+        ))
     } else {
         Ok(SegmentMatcher::Concrete(SegmentMatcherConcrete::Plain {
             kind,
@@ -122,6 +146,16 @@ fn segment_value<'s>(segment: &SegmentConcrete<'s>) -> &'s str {
         | SegmentConcrete::Prefix(value)
         | SegmentConcrete::Suffix(value)
         | SegmentConcrete::Exact(value) => value,
+    }
+}
+
+#[cfg(test)]
+impl SegmentMatcher {
+    fn matches(&self, candidate: &str) -> bool {
+        match self {
+            SegmentMatcher::Concrete(concrete) => concrete.matches(candidate),
+            _ => false,
+        }
     }
 }
 
@@ -273,19 +307,17 @@ mod tests {
         };
         let matchers = build_segment_matchers(&segments, opts).expect("ok");
         assert_eq!(matchers.len(), 4);
-        let patterns: Vec<_> = matchers
+        let needles: Vec<_> = matchers
             .iter()
             .map(|m| match m {
-                SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                    regex.as_str().to_string()
-                }
-                _ => panic!("Expected Regex matcher"),
+                SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive {
+                    needle,
+                    ..
+                }) => needle.clone(),
+                _ => panic!("Expected PlainInsensitive matcher"),
             })
             .collect();
-        assert_eq!(patterns[0], "mid"); // substr
-        assert_eq!(patterns[1], "^(?:pre)"); // prefix
-        assert_eq!(patterns[2], "(?:suf)$"); // suffix
-        assert_eq!(patterns[3], "^(?:exact)$"); // exact
+        assert_eq!(needles, ["mid", "pre", "suf", "exact"]);
     }
 
     // --- wildcard forces regex even when case_sensitive ---
@@ -389,12 +421,11 @@ mod tests {
             case_insensitive: true,
         };
         let m = build_segment_matchers(&segments, opts).unwrap().remove(0);
-        match m {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.is_match("zzzAbCzzz"));
-            }
-            _ => panic!("Expected regex matcher"),
-        }
+        assert!(matches!(
+            m,
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive { .. })
+        ));
+        assert!(m.matches("zzzAbCzzz"));
     }
 
     #[test]
@@ -404,13 +435,12 @@ mod tests {
             case_insensitive: true,
         };
         let m = build_segment_matchers(&segments, opts).unwrap().remove(0);
-        match m {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.is_match("AbCzzz"));
-                assert!(!regex.is_match("zzzabc"));
-            }
-            _ => panic!("Expected regex matcher"),
-        }
+        assert!(matches!(
+            m,
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive { .. })
+        ));
+        assert!(m.matches("AbCzzz"));
+        assert!(!m.matches("zzzabc"));
     }
 
     #[test]
@@ -420,13 +450,12 @@ mod tests {
             case_insensitive: true,
         };
         let m = build_segment_matchers(&segments, opts).unwrap().remove(0);
-        match m {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.is_match("zzzAbC"));
-                assert!(!regex.is_match("AbCzzz"));
-            }
-            _ => panic!("Expected regex matcher"),
-        }
+        assert!(matches!(
+            m,
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive { .. })
+        ));
+        assert!(m.matches("zzzAbC"));
+        assert!(!m.matches("AbCzzz"));
     }
 
     #[test]
@@ -436,13 +465,12 @@ mod tests {
             case_insensitive: true,
         };
         let m = build_segment_matchers(&segments, opts).unwrap().remove(0);
-        match m {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.is_match("AbC"));
-                assert!(!regex.is_match("xabc"));
-            }
-            _ => panic!("Expected regex matcher"),
-        }
+        assert!(matches!(
+            m,
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive { .. })
+        ));
+        assert!(m.matches("AbC"));
+        assert!(!m.matches("xabc"));
     }
 
     // --- Mixed segments producing both Plain and Regex ---
@@ -493,7 +521,7 @@ mod tests {
         for m in matchers {
             assert!(matches!(
                 m,
-                SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { .. })
+                SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive { .. })
             ));
         }
     }
@@ -543,11 +571,14 @@ mod tests {
         };
         let matchers = build_segment_matchers(&segments, opts).unwrap();
         match &matchers[0] {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.is_match("café"));
-                // Basic ASCII case fold works; regex crate may not fold é to É on all platforms, so we only check lowercase.
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive {
+                needle, ..
+            }) => {
+                assert_eq!(needle, "café");
+                assert!(matchers[0].matches("café"));
+                assert!(matchers[0].matches("CAFÉ"));
             }
-            _ => panic!("Expected regex matcher"),
+            _ => panic!("Expected PlainInsensitive matcher"),
         }
     }
 
@@ -565,25 +596,12 @@ mod tests {
         };
         let matchers = build_segment_matchers(&segments, opts).unwrap();
         assert_eq!(matchers.len(), 3);
-        match &matchers[0] {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.as_str().starts_with("^(?:"))
-            }
-            _ => panic!("regex expected"),
-        }
-        match &matchers[1] {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.as_str().ends_with(")$"))
-            }
-            _ => panic!("regex expected"),
-        }
-        match &matchers[2] {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.as_str().starts_with("^(?:"));
-                assert!(regex.as_str().ends_with(")$"));
-            }
-            _ => panic!("regex expected"),
-        }
+        assert!(matchers[0].matches("PREFIX"));
+        assert!(!matchers[0].matches("xpre"));
+        assert!(matchers[1].matches("SUF"));
+        assert!(!matchers[1].matches("suffix-extra"));
+        assert!(matchers[2].matches("ALL"));
+        assert!(!matchers[2].matches("almost"));
     }
 
     // --- Large pattern capacity (sanity, does not panic) ---
@@ -598,10 +616,12 @@ mod tests {
         let matchers = build_segment_matchers(&segments, opts).unwrap();
         assert_eq!(matchers.len(), 1);
         match &matchers[0] {
-            SegmentMatcher::Concrete(SegmentMatcherConcrete::Regex { regex }) => {
-                assert!(regex.as_str().starts_with("^(?:"));
+            SegmentMatcher::Concrete(SegmentMatcherConcrete::PlainInsensitive {
+                needle, ..
+            }) => {
+                assert_eq!(needle.len(), 10_000);
             }
-            _ => panic!("Expected regex"),
+            _ => panic!("Expected PlainInsensitive matcher"),
         }
     }
 

@@ -254,6 +254,12 @@ impl SearchCache {
                 SegmentKind::Suffix => NAME_POOL.search_suffix(needle, token),
                 SegmentKind::Exact => NAME_POOL.search_exact(needle, token),
             },
+            SegmentMatcherConcrete::PlainInsensitive { kind, needle } => match kind {
+                SegmentKind::Substr => NAME_POOL.search_substr_insensitive(needle, token),
+                SegmentKind::Prefix => NAME_POOL.search_prefix_insensitive(needle, token),
+                SegmentKind::Suffix => NAME_POOL.search_suffix_insensitive(needle, token),
+                SegmentKind::Exact => NAME_POOL.search_exact_insensitive(needle, token),
+            },
             SegmentMatcherConcrete::Regex { regex } => NAME_POOL.search_regex(regex, token),
         }?;
         let mut nodes = Vec::with_capacity(names.len());

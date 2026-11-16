@@ -76,22 +76,27 @@ pub fn default_watch_root() -> PathBuf {
 /// 用户可通过偏好设置覆盖；这里只决定「首次启动」。
 pub fn default_ignore_paths() -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = [
+        // 系统伪文件系统 / 不可变系统目录
         "/proc",
         "/sys",
         "/dev",
         "/run",
         "/boot",
         "/lost+found",
-        "/var/cache",
-        "/var/lib/docker",
-        "/var/lib/containers",
-        "/var/log",
-        "/var/tmp",
         "/snap",
         "/usr",
         "/lib",
         "/lib64",
         "/tmp",
+        // 系统缓存 / 日志 / 容器与快照数据
+        "/var/cache",
+        "/var/lib/docker",
+        "/var/lib/containers",
+        "/var/lib/snapd",
+        "/var/lib/flatpak",
+        "/var/lib/systemd/coredump",
+        "/var/log",
+        "/var/tmp",
     ]
     .into_iter()
     .map(PathBuf::from)
@@ -99,15 +104,23 @@ pub fn default_ignore_paths() -> Vec<PathBuf> {
 
     if let Some(home) = home_dir() {
         for relative in [
+            // 用户缓存
             ".cache",
             ".npm",
             ".pnpm-store",
+            ".yarn",
             ".cargo",
+            ".rustup",
             ".m2",
             ".gradle",
             ".nuget",
+            ".thumbnails",
+            // 回收站
             ".local/share/Trash",
             ".Trash",
+            // 系统状态 / 日志
+            ".local/state",
+            // 本应用自身的数据目录
             ".dsh",
         ] {
             paths.push(home.join(relative));
@@ -117,6 +130,53 @@ pub fn default_ignore_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// 默认按目录名忽略：适用于散落在任意项目里的依赖/构建/缓存目录。
+/// 与 `default_ignore_paths` 不同，这些规则在遍历时匹配路径最后一段；
+/// 用户可通过「包含路径」重新纳入某个子树。
+pub const DEFAULT_IGNORE_DIR_NAMES: &[&str] = &[
+    // 版本控制
+    ".git",
+    ".hg",
+    ".svn",
+    // 包 / 依赖目录
+    "node_modules",
+    "bower_components",
+    "vendor",
+    "Pods",
+    ".bundle",
+    ".pub-cache",
+    ".gradle",
+    ".m2",
+    ".cargo",
+    ".npm",
+    ".pnpm-store",
+    ".yarn",
+    ".nuget",
+    ".rustup",
+    // 构建产物 / 虚拟环境
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".next",
+    ".nuxt",
+    ".parcel-cache",
+    ".stack-work",
+    // 浏览器 / 缩略图缓存
+    "Cache",
+    "cache2",
+    "CachedData",
+    "GPUCache",
+    "Code Cache",
+    "CacheStorage",
+    ".thumbnails",
+    // 回收站（XDG 数据目录下的 Trash 已由路径规则覆盖；此处覆盖外接盘常见命名）
+    ".Trash",
+];
 pub struct IndexHandle {
     /// 当前可用索引；`None` 表示尚未构建完成。
     cache: Mutex<Option<SearchCache>>,
@@ -133,6 +193,12 @@ pub struct IndexHandle {
 }
 
 impl IndexHandle {
+    /// 默认忽略规则版本标记：规则升级后旧索引（同一 root/ignore/include）会被复用，
+    /// 因此用标记文件强制重建一次，确保 node_modules 等新规则生效。
+    fn default_ignore_marker_path(&self) -> PathBuf {
+        self.db_path.with_file_name(".default-ignore-names-v1")
+    }
+
     pub fn new(config: IndexConfig, db_path: PathBuf) -> Arc<Self> {
         Arc::new(Self {
             cache: Mutex::new(None),
@@ -302,14 +368,22 @@ impl IndexHandle {
             return;
         }
 
-        // 3) 尝试读持久化缓存（配置必须完全一致，否则走重建）
-        match SearchCache::try_read_persistent_cache(
-            &config.watch_root,
-            &self.db_path,
-            &config.ignore_paths,
-            &config.include_paths,
-            &lifecycle::APP_QUIT,
-        ) {
+        // 3) 尝试读持久化缓存（配置必须完全一致，否则走重建）。
+        //    默认忽略规则变更后旧缓存仍满足「配置一致」，用 marker 强制重建一次。
+        let marker = self.default_ignore_marker_path();
+        let loaded_cache = if marker.is_file() {
+            SearchCache::try_read_persistent_cache(
+                &config.watch_root,
+                &self.db_path,
+                &config.ignore_paths,
+                &config.include_paths,
+                &lifecycle::APP_QUIT,
+            )
+            .map_err(|err| err.to_string())
+        } else {
+            Err("默认忽略规则已升级，重建索引".to_string())
+        };
+        match loaded_cache {
             Ok(cache) => {
                 let count = cache.get_total_files();
                 let watcher_config = config.clone();
@@ -356,10 +430,11 @@ impl IndexHandle {
                 lifecycle::update_app_state(&app, AppLifecycleState::Updating);
 
                 // 扫描使用 fswalk：同一份 WalkData 既给 walker，也给进度上报线程。
-                let walk_data = WalkData::new(
+                let walk_data = WalkData::new_with_ignore_names(
                     &config.watch_root,
                     &config.ignore_paths,
                     &config.include_paths,
+                    DEFAULT_IGNORE_DIR_NAMES,
                     false,
                     || lifecycle::APP_QUIT.load(Ordering::Relaxed),
                 );
@@ -403,6 +478,14 @@ impl IndexHandle {
                         emit_ready(&app, count);
                         lifecycle::update_app_state(&app, AppLifecycleState::Ready);
                         handle.restart_watcher(Some(&app), &config);
+
+                        let marker = handle.default_ignore_marker_path();
+                        if let Some(parent) = marker.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(err) = std::fs::write(&marker, b"1") {
+                            eprintln!("{LOG_PREFIX} 写入默认忽略规则标记失败: {err}");
+                        }
 
                         // 验收自检：MIAOSOU_SELFTEST=<query> 时自动跑一次搜索并打印命中路径，
                         // 便于在目标机（UOS）无需人工输入即可验证「扫描 → 建索引 → 检索」链路。
@@ -694,7 +777,17 @@ mod tests {
             .collect();
         assert!(rendered.iter().any(|path| path == "/proc"));
         assert!(rendered.iter().any(|path| path == "/sys"));
+        assert!(rendered.iter().any(|path| path == "/var/log"));
         assert!(rendered.iter().any(|path| path.ends_with("/.cache")));
+        assert!(rendered
+            .iter()
+            .any(|path| path.ends_with("/.local/share/Trash")));
+        for name in ["node_modules", "target", ".git", "__pycache__"] {
+            assert!(
+                DEFAULT_IGNORE_DIR_NAMES.contains(&name),
+                "缺少目录名忽略: {name}"
+            );
+        }
     }
 
     /// 性能基准（手动）：合成大目录树，测全量扫描、查询延迟、内存峰值与索引体积。
@@ -839,5 +932,28 @@ mod tests {
         } else {
             std::fs::remove_dir_all(&root).ok();
         }
+    }
+    #[test]
+    fn default_ignore_names_exclude_dependency_dirs() {
+        let root = temp_root("ignore-names");
+        std::fs::create_dir_all(root.join("keep")).unwrap();
+        std::fs::write(root.join("keep/report.txt"), b"x").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), b"x").unwrap();
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::write(root.join("target/debug/app"), b"x").unwrap();
+        std::fs::create_dir_all(root.join(".git/objects")).unwrap();
+        std::fs::write(root.join(".git/objects/blob"), b"x").unwrap();
+
+        let without = SearchCache::walk_fs_with_ignore(&root, &[]);
+        let with = SearchCache::walk_fs_with_ignore_and_names(&root, &[], DEFAULT_IGNORE_DIR_NAMES);
+        assert!(
+            with.get_total_files() < without.get_total_files(),
+            "目录名忽略应减少节点数：without={}, with={}",
+            without.get_total_files(),
+            with.get_total_files()
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

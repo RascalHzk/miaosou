@@ -115,6 +115,29 @@ pub fn should_ignore_path(
     }
 }
 
+/// 目录名忽略：用于 `node_modules`、`target`、`.git` 等可在任意层级出现的依赖/构建目录。
+///
+/// 与路径忽略不同，这里只匹配**路径的最后一段**；包含路径（include）优先：
+/// 若 `path` 在 include 子树内，或 `path` 是某个 include 的祖先，则保留。
+pub fn should_ignore_dir_name(
+    path: &Path,
+    include_paths: &[PathBuf],
+    ignore_dir_names: &[&str],
+) -> bool {
+    if ignore_dir_names.is_empty() {
+        return false;
+    }
+    if include_paths
+        .iter()
+        .any(|include| include.starts_with(path) || path.starts_with(include))
+    {
+        return false;
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| ignore_dir_names.iter().any(|ignored| ignored == &name))
+}
+
 pub struct WalkData<'w, F: Fn() -> bool> {
     pub num_files: AtomicUsize,
     pub num_dirs: AtomicUsize,
@@ -124,6 +147,8 @@ pub struct WalkData<'w, F: Fn() -> bool> {
     pub ignore_directories: &'w [PathBuf],
     /// Paths to include even when they fall under an ignored directory.
     pub include_paths: &'w [PathBuf],
+    /// Directory names to ignore at any depth (`node_modules`, `target`, `.git`, ...).
+    pub ignore_dir_names: &'w [&'w str],
     /// If set, metadata will be collected for each file node(folder node will get free metadata).
     need_metadata: bool,
 }
@@ -140,6 +165,7 @@ where
             .field("root_path", &self.root_path)
             .field("ignore_directories", &self.ignore_directories)
             .field("include_paths", &self.include_paths)
+            .field("ignore_dir_names", &self.ignore_dir_names)
             .field("need_metadata", &self.need_metadata)
             .finish()
     }
@@ -158,6 +184,7 @@ impl<'w> WalkData<'w, fn() -> bool> {
             root_path,
             ignore_directories: &[],
             include_paths: &[],
+            ignore_dir_names: &[],
             need_metadata,
         }
     }
@@ -171,6 +198,25 @@ impl<'w, F: Fn() -> bool> WalkData<'w, F> {
         need_metadata: bool,
         cancel: F,
     ) -> Self {
+        Self::new_with_ignore_names(
+            root_path,
+            ignore_directories,
+            include_paths,
+            &[],
+            need_metadata,
+            cancel,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_ignore_names(
+        root_path: &'w Path,
+        ignore_directories: &'w [PathBuf],
+        include_paths: &'w [PathBuf],
+        ignore_dir_names: &'w [&'w str],
+        need_metadata: bool,
+        cancel: F,
+    ) -> Self {
         Self {
             num_files: AtomicUsize::new(0),
             num_dirs: AtomicUsize::new(0),
@@ -178,12 +224,17 @@ impl<'w, F: Fn() -> bool> WalkData<'w, F> {
             root_path,
             ignore_directories,
             include_paths,
+            ignore_dir_names,
             need_metadata,
         }
     }
 
     fn should_ignore(&self, path: &Path) -> bool {
         should_ignore_path(path, self.ignore_directories, self.include_paths)
+    }
+
+    fn should_ignore_dir_name(&self, path: &Path) -> bool {
+        should_ignore_dir_name(path, self.include_paths, self.ignore_dir_names)
     }
 
     fn is_cancelled(&self) -> bool {
@@ -269,6 +320,9 @@ fn walk<F: Fn() -> bool + Send + Sync>(path: &Path, walk_data: &WalkData<'_, F>)
                                 // doesn't traverse symlink
                                 if let Ok(data) = entry.file_type() {
                                     if data.is_dir() {
+                                        if walk_data.should_ignore_dir_name(&path) {
+                                            return None;
+                                        }
                                         walk(&path, walk_data)
                                     } else {
                                         walk_data.num_files.fetch_add(1, Ordering::Relaxed);
@@ -909,5 +963,50 @@ mod tests {
                 assert!(time.elapsed() < Duration::from_secs(1));
             });
         });
+    }
+    #[test]
+    fn dir_name_ignore_matches_only_last_component() {
+        use super::should_ignore_dir_name;
+        use std::path::{Path, PathBuf};
+
+        let names = ["node_modules", ".git"];
+        assert!(should_ignore_dir_name(
+            Path::new("/home/u/proj/node_modules"),
+            &[],
+            &names
+        ));
+        assert!(should_ignore_dir_name(
+            Path::new("/home/u/proj/.git"),
+            &[],
+            &names
+        ));
+        assert!(!should_ignore_dir_name(
+            Path::new("/home/u/proj/node_modules-old"),
+            &[],
+            &names
+        ));
+        assert!(!should_ignore_dir_name(
+            Path::new("/home/u/proj/node_modules/file.js"),
+            &[],
+            &names
+        ));
+        assert!(!should_ignore_dir_name(
+            Path::new("/home/u/src/main.rs"),
+            &[],
+            &names
+        ));
+
+        // 包含路径优先：node_modules 里的 include 子树要保留
+        let includes = [PathBuf::from("/home/u/proj/node_modules/keep")];
+        assert!(!should_ignore_dir_name(
+            Path::new("/home/u/proj/node_modules"),
+            &includes,
+            &names
+        ));
+        assert!(!should_ignore_dir_name(
+            Path::new("/home/u/proj/node_modules/keep"),
+            &includes,
+            &names
+        ));
     }
 }

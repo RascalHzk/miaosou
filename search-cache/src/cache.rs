@@ -209,6 +209,26 @@ impl SearchCache {
         .unwrap()
     }
 
+    /// 与 `walk_fs_with_ignore` 相同，但额外按目录名忽略（`node_modules`、`target` 等）。
+    pub fn walk_fs_with_ignore_and_names(
+        path: &Path,
+        ignore_paths: &[PathBuf],
+        ignore_dir_names: &[&str],
+    ) -> Self {
+        Self::walk_fs_with_walk_data(
+            &WalkData::new_with_ignore_names(
+                path,
+                ignore_paths,
+                &[],
+                ignore_dir_names,
+                false,
+                || false,
+            ),
+            &NEVER_STOPPED,
+        )
+        .unwrap()
+    }
+
     pub fn walk_fs(path: &Path) -> Self {
         Self::walk_fs_with_walk_data(
             &WalkData::new(path, &[], &[], false, || false),

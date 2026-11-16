@@ -32,13 +32,13 @@
 | `cargo check` / `cargo build`（macOS） | ✅ 通过（tauri 1.8.3，链接 + 资源嵌入 OK） |
 | 本机冒烟运行（窗口 + 全局快捷键注册） | ✅ 通过（8s 存活，无 panic） |
 | Debian 10 容器内 `cargo check` / `cargo build`（webkit 4.0 链接） | ✅ 通过（产物 8.2MB x86-64，GLIBC ≤ 2.28） |
-| Debian 10 容器内 `deb` 打包 | ✅ 通过（**4.2MB / miaosou 0.3.4**，含 UI + 索引 + 实时监控 + 图标/缩略图/剪贴板 + AppStream 元数据） |
+| Debian 10 容器内 `deb` 打包 | ✅ 通过（**4.2MB / miaosou 0.3.5**，含 UI + 索引 + 实时监控 + 图标/缩略图/剪贴板 + AppStream 元数据） |
 | UOS V20 实机出图 / 中文输入 / 完整链路 | ⬜ 待验证 |
 | 真实索引（fswalk + search-cache + slab-mmap 持久化） | ✅ 已完成（12 单测含持久化往返与旧数据迁移，运行时自检通过） |
 | inotify 实时监控（去抖/预算保护/降级对账） | ✅ 已完成（真实事件流测试：macOS + Debian 10） |
 | freedesktop 图标主题 + 缩略图缓存 | ✅ 已完成（图片/视频/PDF 走 `~/.cache/thumbnails`，未命中回退图标） |
 | 文件管理器定位（DDE/GNOME/XFCE/KDE 候选 + 兜底） | ✅ 代码 + 单测；DDE 真机参数确认待 UOS 验收 |
-| 性能基准（百万文件 / 4GB 机型目标） | ✅ 1M 文件：建索引 2.34s、查询 p50 10.6ms、内存 367MB |
+| 性能基准（百万文件 / 4GB 机型目标） | ✅ 1M 文件：建索引 1.69s、查询 p50 6.1ms、索引 6.3MB；deb 4.2MB |
 | 预览策略（P3 决策） | ✅ **不做内置预览**：双击 / Ctrl+O / 右键统一用系统默认程序打开 |
 | 上架材料（AppStream + desktop + 图标 + copyright） | ✅ 已写入 deb（0.3.0） |
 | 安全加固（CSP / freezePrototype / allowlist 最小化） | ✅ 已完成（见下「安全配置」） |
@@ -134,7 +134,7 @@ cargo tauri dev            # 或 cargo tauri build --debug
 
 | 文件 | 说明 |
 |---|---|
-| `linux/dist/miaosou_0.3.4_amd64.deb` | 4.2MB，真实 UI + 索引管线 + inotify 实时监控 + freedesktop 图标/缩略图 + 剪贴板 + 多桌面定位；sha256 `c44462e2…9a91`；`Depends: libayatana-appindicator3-1, libwebkit2gtk-4.0-37, libgtk-3-0` |
+| `linux/dist/miaosou_0.3.5_amd64.deb` | 4.2MB，真实 UI + 索引管线 + inotify 实时监控 + freedesktop 图标/缩略图 + 剪贴板 + 多桌面定位；sha256 `fc566286…d11e`；`Depends: libayatana-appindicator3-1, libwebkit2gtk-4.0-37, libgtk-3-0` |
 | `linux/dist/miaosou` | `ELF 64-bit x86-64`，动态链接，**GLIBC ≤ 2.28** |
 
 > `linux/dist/` 是构建产物目录，已被 `.gitignore` 忽略；重新生成见下方构建命令。
@@ -142,7 +142,7 @@ cargo tauri dev            # 或 cargo tauri build --debug
 在 UOS V20 上安装后：
 
 ```bash
-sudo dpkg -i miaosou_0.3.4_amd64.deb
+sudo dpkg -i miaosou_0.3.5_amd64.deb
 miaosou
 # 若出现白屏/花屏（webkit 2.38 + 老内核）：
 WEBKIT_DISABLE_DMABUF_RENDERER=1 miaosou
@@ -187,12 +187,12 @@ echo 'fs.inotify.max_user_watches=524288' | sudo tee /etc/sysctl.d/99-miaosou.co
 **安装 / 升级 / 回滚**（离线包由运维统一分发）：
 
 ```bash
-sudo dpkg -i miaosou_0.3.4_amd64.deb        # 安装或升级
+sudo dpkg -i miaosou_0.3.5_amd64.deb        # 安装或升级
 sudo apt-get -f install                     # 若提示缺依赖（正常 UOS 桌面环境已自带）
 miaosou                                     # 从应用菜单或终端启动
 
 # 回滚：保留上一版 deb 即可；用户数据在 ~/.config/miaosou/（索引与窗口状态）
-sudo dpkg -i miaosou_0.3.4_amd64.deb
+sudo dpkg -i miaosou_0.3.5_amd64.deb
 ```
 
 - 索引数据库 `~/.config/miaosou/index.db` 与上游 zstd slab 格式一致；跨版本可复用，
