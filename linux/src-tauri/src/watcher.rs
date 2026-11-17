@@ -87,7 +87,8 @@ impl FsWatcher {
 
         // 等初始 watch 安装完（或降级决定完成）再返回：否则调用方紧接着的写入可能落在
         // 「目录还没挂上 watch」的窗口里，丢事件（inotify/kqueue 都没有历史回放）。
-        if ready_rx.recv_timeout(Duration::from_secs(10)).is_err() {
+        // 只等 500ms：大目录树的后台安装不应阻塞启动；调用方已在 blocking 线程里。
+        if ready_rx.recv_timeout(Duration::from_millis(500)).is_err() {
             eprintln!("{LOG_PREFIX} 等待文件监控就绪超时，继续按异步方式运行");
         }
 

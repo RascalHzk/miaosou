@@ -43,7 +43,7 @@
 - 复制文件到剪贴板（X11 属主模型），可在 DDE / GNOME 文件管理器中直接粘贴
 - 在文件管理器中定位、调用系统默认程序打开
 - 原生菜单与系统托盘、全局快捷键 `Ctrl+Shift+Space`、窗口几何持久化
-- 单实例运行；关闭窗口后驻留托盘
+- 单实例运行；托盘开启时关闭窗口驻留托盘，托盘关闭时关闭窗口直接退出
 
 ### 性能与体积
 
@@ -75,7 +75,7 @@
 从 [Releases](https://github.com/RascalHzk/miaosou/releases) 下载 deb：
 
 ```bash
-sudo dpkg -i miaosou_0.3.5_amd64.deb
+sudo dpkg -i miaosou_0.4.0_amd64.deb
 # 如提示缺依赖
 sudo apt-get -f install
 miaosou
@@ -186,7 +186,7 @@ Non-goals: built-in preview and a tag system (see Known limitations); those are 
 - Copy files to the clipboard (X11 owner model) for pasting into DDE/GNOME file managers
 - Reveal in file manager, open with the system default application
 - Native menu and system tray, global shortcut `Ctrl+Shift+Space`, persisted window geometry
-- Single-instance; closing the window keeps the app in the tray
+- Single-instance; with the tray enabled, closing the window keeps the app in the tray; with the tray disabled, closing it quits the app
 
 ### Performance and size
 
@@ -218,7 +218,7 @@ Measured with a release build in a Debian 10 container (matching UOS V20: x86_64
 Download the deb from [Releases](https://github.com/RascalHzk/miaosou/releases):
 
 ```bash
-sudo dpkg -i miaosou_0.3.5_amd64.deb
+sudo dpkg -i miaosou_0.4.0_amd64.deb
 sudo apt-get -f install   # only if dependencies are missing
 miaosou
 ```

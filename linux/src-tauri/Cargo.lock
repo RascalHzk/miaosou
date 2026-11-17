@@ -1995,14 +1995,17 @@ dependencies = [
 
 [[package]]
 name = "miaosou"
-version = "0.3.5"
+version = "0.4.0"
 dependencies = [
  "arboard",
  "cardinal-sdk",
  "cardinal-syntax",
  "fswalk",
+ "gtk",
+ "libc",
  "md-5",
  "notify",
+ "rayon",
  "search-cache",
  "search-cancel",
  "serde",

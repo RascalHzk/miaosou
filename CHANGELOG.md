@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 — 2026-11-17
+
+UOS 实机反馈修复：
+
+- 启动不再阻塞主线程：`start_logic` / `set_watch_config` 改为 async + spawn_blocking；
+  watcher 就绪等待缩短到 500ms；索引/扫描 rayon 线程默认 `min(4, cores-1)`（`MIAOSOU_INDEX_THREADS` 可调）。
+- 复制文件粘贴：Linux 改用 GTK clipboard，同时提供 `text/uri-list`、
+  `x-special/gnome-copied-files`、`text/plain`，DDE 可直接粘贴。
+- 托盘“显示托盘图标”开关生效：运行时 `destroy()` / `SystemTray::build()`；
+  托盘关闭时点窗口关闭按钮直接退出（托盘开启时仍隐藏到托盘）。
+- 单实例：启动前 flock + Unix socket；第二次启动唤起已有窗口后退出，
+  不再产生多进程/多 watcher/并发写索引。
+
 ## 0.3.5 — 2026-11-16
 
 - 大小写不敏感查询不再为每个字面量 term 编译 regex：名字池预存小写名，查询侧用

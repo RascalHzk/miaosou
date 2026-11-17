@@ -39,3 +39,6 @@ output/
 # 本地运行产物
 *.log
 .window-state.json
+
+# search-cache 是独立 workspace，构建时会生成自己的 lock；不作为发布物跟踪
+/search-cache/Cargo.lock

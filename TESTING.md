@@ -68,7 +68,7 @@ cargo test --release --features custom-protocol perf_benchmark -- --ignored --no
 ## 5. 目标机验收（UOS V20 / x86_64）
 
 ```bash
-sudo dpkg -i linux/dist/miaosou_0.3.5_amd64.deb
+sudo dpkg -i linux/dist/miaosou_0.4.0_amd64.deb
 MIAOSOU_SELFTEST=report miaosou          # 索引就绪后自动查询一次并打印命中路径
 MIAOSOU_TRACE=1 miaosou                  # 打印监控原始事件、增量批次与查询耗时
 MIAOSOU_WATCH_ROOT=/path/to/dir miaosou  # 用指定目录代替 $HOME 做小范围验证

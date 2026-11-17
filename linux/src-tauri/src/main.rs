@@ -23,6 +23,8 @@
     windows_subsystem = "windows"
 )]
 
+#[cfg(target_os = "linux")]
+mod clipboard;
 mod commands;
 mod icons;
 mod identity;
@@ -32,6 +34,7 @@ mod native_ui;
 mod paths;
 mod reveal;
 mod search_activity;
+mod single_instance;
 mod sort;
 mod watcher;
 mod window_controls;
@@ -42,11 +45,16 @@ use std::sync::{atomic::Ordering, Arc};
 use tauri::{Manager, RunEvent, WindowEvent};
 
 fn main() {
+    // 单实例：必须在 Tauri 初始化之前，第二个进程只负责唤起首实例。
+    if !single_instance::acquire() {
+        return;
+    }
+    configure_index_threads();
+
     let app = tauri::Builder::default()
         // 原生菜单 / 系统托盘：上游在前端用 v2 JS API 构建，v1 只能放 Rust 侧
         .menu(native_ui::build_app_menu())
         .on_menu_event(native_ui::handle_menu_event)
-        .system_tray(native_ui::build_tray())
         .on_system_tray_event(native_ui::handle_tray_event)
         .invoke_handler(tauri::generate_handler![
             commands::search,
@@ -74,6 +82,20 @@ fn main() {
         ])
         .setup(|app| {
             let handle = app.handle();
+
+            // 首实例已就绪：后续第二次启动的 SHOW 请求可以唤起主窗口。
+            single_instance::attach(handle.clone());
+
+            // 托盘句柄：偏好设置里的“显示托盘图标”用它做运行时销毁/重建。
+            // 放在 setup 里创建，避免 builder 创建失败时 app.tray_handle() panic。
+            let tray = match native_ui::build_tray().build(&handle) {
+                Ok(handle) => Some(handle),
+                Err(err) => {
+                    eprintln!("[miaosou] 创建系统托盘失败: {err}");
+                    None
+                }
+            };
+            app.manage(native_ui::TrayState::from_option(tray));
 
             // 启动横幅：现场排查时一眼看到「哪个产品、哪个版本、哪个 identifier」。
             eprintln!(
@@ -123,7 +145,19 @@ fn main() {
                     if lifecycle::EXIT_REQUESTED.load(Ordering::Relaxed) {
                         return;
                     }
-                    // 与上游一致：关闭窗口 = 隐藏到后台，进程继续驻留
+
+                    let tray_enabled = window
+                        .app_handle()
+                        .try_state::<native_ui::TrayState>()
+                        .map(|state| state.is_enabled())
+                        .unwrap_or(true);
+                    if !tray_enabled {
+                        // 偏好里关闭了托盘：没有“隐藏到托盘”的目标，按普通应用退出。
+                        // 不 prevent_close，交给 ExitRequested 做落盘。
+                        return;
+                    }
+
+                    // 托盘开启：与上游一致，关闭窗口 = 隐藏到后台，进程继续驻留。
                     api.prevent_close();
                     window_controls::hide_window(window);
                     window_state::save_now(&window.app_handle());
@@ -165,5 +199,29 @@ fn flush_index(handle: &tauri::AppHandle) {
     };
     if let Err(err) = state.inner().flush() {
         eprintln!("[miaosou] 退出时保存索引失败: {err}");
+    }
+}
+
+/// 限制索引/扫描的 rayon 线程数，避免首次全量扫描把 UI/WebKit 饿死。
+///
+/// 默认 `min(4, cores-1)`；可用 `MIAOSOU_INDEX_THREADS` 覆盖。
+fn configure_index_threads() {
+    let default_threads = std::thread::available_parallelism()
+        .map(|count| count.get().saturating_sub(1).clamp(1, 4))
+        .unwrap_or(2);
+    let threads = std::env::var("MIAOSOU_INDEX_THREADS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_threads);
+
+    if let Err(err) = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|index| format!("miaosou-index-{index}"))
+        .build_global()
+    {
+        eprintln!("[miaosou] 初始化索引线程池失败（{err}），继续使用 rayon 默认值");
+    } else {
+        eprintln!("[miaosou] 索引/扫描线程数：{threads}");
     }
 }

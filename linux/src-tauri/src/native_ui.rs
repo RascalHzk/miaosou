@@ -27,7 +27,7 @@
 use crate::{identity, window_controls};
 use tauri::{
     AboutMetadata, AppHandle, CustomMenuItem, Menu, MenuEntry, MenuItem, Submenu, SystemTray,
-    SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, WindowMenuEvent,
+    SystemTrayEvent, SystemTrayHandle, SystemTrayMenu, SystemTrayMenuItem, WindowMenuEvent, Wry,
 };
 
 /// 菜单/托盘/关于框里显示的产品名（中文名，信创目标用户）。
@@ -211,6 +211,47 @@ fn build_tray_menu() -> SystemTrayMenu {
         )
         .add_native_item(SystemTrayMenuItem::Separator)
         .add_item(CustomMenuItem::new(ID_TRAY_QUIT, "退出 秒搜"))
+}
+
+/// 托盘句柄状态：支持运行时销毁/重建“显示托盘图标”开关。
+pub struct TrayState {
+    handle: std::sync::Mutex<Option<SystemTrayHandle<Wry>>>,
+}
+
+impl TrayState {
+    pub fn from_option(handle: Option<SystemTrayHandle<Wry>>) -> Self {
+        Self {
+            handle: std::sync::Mutex::new(handle),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.handle
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(true)
+    }
+
+    pub fn set_enabled(&self, app: &AppHandle, enabled: bool) -> Result<(), String> {
+        let mut guard = self
+            .handle
+            .lock()
+            .map_err(|_| "托盘状态锁中毒".to_string())?;
+
+        if enabled {
+            if guard.is_none() {
+                let handle = build_tray()
+                    .build(app)
+                    .map_err(|err| format!("创建托盘失败: {err}"))?;
+                *guard = Some(handle);
+            }
+        } else if let Some(handle) = guard.take() {
+            handle
+                .destroy()
+                .map_err(|err| format!("销毁托盘失败: {err}"))?;
+        }
+        Ok(())
+    }
 }
 
 pub fn build_tray() -> SystemTray {

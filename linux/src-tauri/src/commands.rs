@@ -20,6 +20,7 @@ use search_cache::{SlabIndex, SlabNodeMetadata, SlabNodeMetadataCompact};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 use tauri::{AppHandle, State};
@@ -232,26 +233,36 @@ pub async fn get_index_info(state: State<'_, SharedIndex>) -> Result<String, Str
 
 /// 前端启动时调用：下发监控配置并确保索引就绪。
 #[tauri::command]
-pub fn start_logic(
+pub async fn start_logic(
     watch_root: String,
     ignore_paths: Vec<String>,
     include_paths: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, SharedIndex>,
 ) -> Result<(), String> {
-    apply_watch_config(watch_root, ignore_paths, include_paths, app, state)
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_watch_config_blocking(watch_root, ignore_paths, include_paths, app, index)
+    })
+    .await
+    .map_err(|err| format!("启动索引任务失败: {err}"))?
 }
 
 /// 偏好设置变更时调用：配置变化 → 重建；未变 → 直接复用持久化索引。
 #[tauri::command]
-pub fn set_watch_config(
+pub async fn set_watch_config(
     watch_root: String,
     ignore_paths: Vec<String>,
     include_paths: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, SharedIndex>,
 ) -> Result<(), String> {
-    apply_watch_config(watch_root, ignore_paths, include_paths, app, state)
+    let index = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_watch_config_blocking(watch_root, ignore_paths, include_paths, app, index)
+    })
+    .await
+    .map_err(|err| format!("更新监控配置任务失败: {err}"))?
 }
 
 #[tauri::command]
@@ -260,12 +271,12 @@ pub fn trigger_rescan(app: AppHandle, state: State<'_, SharedIndex>) -> Result<(
     Ok(())
 }
 
-fn apply_watch_config(
+fn apply_watch_config_blocking(
     watch_root: String,
     ignore_paths: Vec<String>,
     include_paths: Option<Vec<String>>,
     app: AppHandle,
-    state: State<'_, SharedIndex>,
+    index: Arc<IndexHandle>,
 ) -> Result<(), String> {
     // 验收/冒烟用：MIAOSOU_WATCH_ROOT 强制覆盖监控根。必须在构建配置**之前**生效：
     // 否则「忽略规则与监控根冲突」的清理会作用在旧根上。
@@ -286,7 +297,7 @@ fn apply_watch_config(
         ignore_paths,
         include_paths.unwrap_or_default(),
     )?;
-    state.inner().ensure_ready(&app, config);
+    index.ensure_ready(&app, config);
     Ok(())
 }
 
@@ -390,21 +401,33 @@ pub async fn open_path(path: String) -> Result<(), String> {
 
 /// 复制文件到剪贴板：用户可在 DDE/GNOME 文件管理器里直接 Ctrl+V。
 ///
-/// X11 剪贴板是「属主服务」模型：设置完数据后，本进程要一直活着响应读取请求。
-/// arboard 的 `.wait()` 会在后台线程里 serve 到内容被替换，所以这里必须起线程，
-/// 不能在命令线程里阻塞（命令线程在 Tauri 的 async runtime 上）。
+/// Linux 走 GTK clipboard（见 `clipboard.rs`）：DDE 需要
+/// `x-special/gnome-copied-files`，arboard 只提供 `text/uri-list`。
+/// 其它平台继续用 arboard，设置后由系统负责剪贴板生命周期。
 #[tauri::command]
-pub fn copy_files_to_clipboard(paths: Vec<String>) {
+pub fn copy_files_to_clipboard(app: AppHandle, paths: Vec<String>) {
     let candidates = normalize_clipboard_paths(paths);
     if candidates.is_empty() {
         eprintln!("{LOG_PREFIX} 复制文件：没有可用的绝对路径");
         return;
     }
-    let spawned = std::thread::Builder::new()
-        .name("miaosou-clipboard".to_string())
-        .spawn(move || copy_paths_to_clipboard(candidates));
-    if let Err(err) = spawned {
-        eprintln!("{LOG_PREFIX} 启动剪贴板线程失败: {err}");
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(err) = crate::clipboard::copy_files(&app, candidates) {
+            eprintln!("{LOG_PREFIX} 复制文件到剪贴板失败: {err}");
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = &app;
+        let spawned = std::thread::Builder::new()
+            .name("miaosou-clipboard".to_string())
+            .spawn(move || copy_paths_to_clipboard(candidates));
+        if let Err(err) = spawned {
+            eprintln!("{LOG_PREFIX} 启动剪贴板线程失败: {err}");
+        }
     }
 }
 
@@ -433,6 +456,7 @@ fn normalize_clipboard_paths(paths: Vec<String>) -> Vec<PathBuf> {
     normalized
 }
 
+#[cfg(not(target_os = "linux"))]
 fn copy_paths_to_clipboard(paths: Vec<PathBuf>) {
     let mut clipboard = match arboard::Clipboard::new() {
         Ok(clipboard) => clipboard,
@@ -442,21 +466,8 @@ fn copy_paths_to_clipboard(paths: Vec<PathBuf>) {
         }
     };
 
-    // Linux：设置后等待属主被替换（在后台线程里），期间持续响应读取请求
-    #[cfg(target_os = "linux")]
-    {
-        use arboard::SetExtLinux;
-        let result = clipboard.set().wait().file_list(&paths);
-        if let Err(err) = result {
-            eprintln!("{LOG_PREFIX} 写入剪贴板失败: {err}");
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        if let Err(err) = clipboard.set().file_list(&paths) {
-            eprintln!("{LOG_PREFIX} 写入剪贴板失败: {err}");
-        }
+    if let Err(err) = clipboard.set().file_list(&paths) {
+        eprintln!("{LOG_PREFIX} 写入剪贴板失败: {err}");
     }
 }
 
@@ -493,9 +504,12 @@ pub fn toggle_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn set_tray_activation_policy(app: AppHandle, enabled: bool) {
-    // Linux 无 macOS 的 accessory/regular 激活策略；v1 也没有运行时移除托盘的 API。
-    let _ = (app, enabled);
+pub fn set_tray_activation_policy(
+    app: AppHandle,
+    enabled: bool,
+    state: State<'_, crate::native_ui::TrayState>,
+) -> Result<(), String> {
+    state.inner().set_enabled(&app, enabled)
 }
 
 // --- 全局快捷键（v1 需 Rust 侧注册；上游是前端 JS 插件） ---

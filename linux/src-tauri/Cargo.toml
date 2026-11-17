@@ -1,6 +1,6 @@
 [package]
 name = "miaosou"
-version = "0.3.5"
+version = "0.4.0"
 description = "秒搜 —— 快速文件搜索（Tauri v1 壳 / 统信 UOS V20 / x86_64）"
 authors = ["秒搜 信创移植项目"]
 # 注意：这里必须用 2021。Tauri v1 的 build script 依赖的 cargo_toml 0.15 不认识 edition 2024，
@@ -49,6 +49,14 @@ arboard = { version = "3.7", default-features = false }
 md-5 = "0.10"
 search-cancel = { path = "../../search-cancel" }
 fswalk = { path = "../../fswalk" }
+# 启动时限制扫描线程，避免首扫饿死 UI（见 main.rs configure_index_threads）
+rayon = "1.9"
+# 单实例 flock/getuid（Linux/macOS 开发机都可用）
+libc = "0.2"
+
+# Linux 剪贴板（DDE 需要 x-special/gnome-copied-files；arboard 只有 text/uri-list）
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.15"
 
 [features]
 # `tauri build` / `tauri dev --release` 时启用，把前端资源编译进二进制。

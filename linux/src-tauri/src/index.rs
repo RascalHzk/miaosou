@@ -184,6 +184,8 @@ pub struct IndexHandle {
     loaded_config: Mutex<Option<IndexConfig>>,
     /// 期望配置（最近一次请求的配置）。
     config: Mutex<IndexConfig>,
+    /// 配置代际：异步加载缓存时防止旧结果覆盖新配置。
+    config_generation: std::sync::atomic::AtomicU64,
     db_path: PathBuf,
     building: AtomicBool,
     /// 实时监控线程（构建/加载成功后启动，配置变更或退出时停止）。
@@ -204,6 +206,7 @@ impl IndexHandle {
             cache: Mutex::new(None),
             loaded_config: Mutex::new(None),
             config: Mutex::new(config),
+            config_generation: std::sync::atomic::AtomicU64::new(0),
             db_path,
             building: AtomicBool::new(false),
             watcher: Mutex::new(None),
@@ -368,6 +371,13 @@ impl IndexHandle {
             return;
         }
 
+        let generation = self
+            .config_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
+
+        let load_started = std::time::Instant::now();
+
         // 3) 尝试读持久化缓存（配置必须完全一致，否则走重建）。
         //    默认忽略规则变更后旧缓存仍满足「配置一致」，用 marker 强制重建一次。
         let marker = self.default_ignore_marker_path();
@@ -385,6 +395,10 @@ impl IndexHandle {
         };
         match loaded_cache {
             Ok(cache) => {
+                if self.config_generation.load(Ordering::SeqCst) != generation {
+                    eprintln!("[miaosou] 忽略过期的索引加载结果（配置已变更）");
+                    return;
+                }
                 let count = cache.get_total_files();
                 let watcher_config = config.clone();
                 if let Ok(mut guard) = self.cache.lock() {
@@ -394,8 +408,9 @@ impl IndexHandle {
                     *guard = Some(config);
                 }
                 eprintln!(
-                    "{LOG_PREFIX} 已加载持久化索引：{count} 项（{:?}）",
-                    self.db_path
+                    "{LOG_PREFIX} 已加载持久化索引：{count} 项（{:?}，用时 {}ms）",
+                    self.db_path,
+                    load_started.elapsed().as_millis()
                 );
                 emit_status_bar(app, count);
                 emit_ready(app, count);

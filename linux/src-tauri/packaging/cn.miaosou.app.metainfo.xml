@@ -35,6 +35,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.0" date="2026-11-17">
+      <description>
+        <p>启动异步化、DDE 剪贴板、托盘开关生效、Unix socket 单实例。</p>
+      </description>
+    </release>
     <release version="0.3.5" date="2026-11-16">
       <description>
         <p>大小写不敏感查询改为小写名字池 + memchr；默认忽略系统/缓存/回收站/日志/依赖目录。</p>
